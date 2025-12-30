@@ -1,128 +1,170 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import os
+import matplotlib.pyplot as plt
 
-# =========================
-# CONFIG
-# =========================
-st.set_page_config(page_title="Aviator Indicator Dashboard", layout="wide")
+# -----------------------------
+# PAGE CONFIG
+# -----------------------------
+st.set_page_config(
+    page_title="Aviator Prediction Dashboard",
+    layout="wide"
+)
 
-CSV_FILE = "aviator_processed_data.csv"
-
-# =========================
+# -----------------------------
 # CSS STYLING
-# =========================
+# -----------------------------
 st.markdown("""
 <style>
 body {
-    background-color: #f6f8fa;
+    background-color: #f5f7fa;
 }
-.metric-box {
-    padding: 15px;
-    border-radius: 10px;
-    background-color: white;
-    box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
+.main-title {
+    font-size: 34px;
+    font-weight: bold;
+    color: #1f4e79;
     text-align: center;
 }
-.good { color: green; font-weight: bold; }
-.warn { color: orange; font-weight: bold; }
-.bad { color: red; font-weight: bold; }
+.metric-box {
+    background-color: white;
+    padding: 15px;
+    border-radius: 12px;
+    box-shadow: 0px 0px 10px rgba(0,0,0,0.08);
+    text-align: center;
+}
+.yes {
+    color: green;
+    font-weight: bold;
+}
+.no {
+    color: red;
+    font-weight: bold;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# FUNCTIONS
-# =========================
-def calculate_features(df):
-    df["Variation_Tv"] = df["Target"].diff().fillna(0)
-    df["Vstatus"] = df["Variation_Tv"].cumsum()
-    df["lag_Target"] = df["Target"].shift(1)
-    df["lag_Variation"] = df["Variation_Tv"].shift(1)
-    df["Vstatus_LV"] = df["lag_Variation"].fillna(0).cumsum()
-    df["Std_Tv"] = df["Variation_Tv"].expanding().std(ddof=1)
-    df["StdDev_Variation"] = df["Variation_Tv"].expanding().std(ddof=1)
-    df["Ave_mean"] = df["Target"].expanding().mean()
+st.markdown('<div class="main-title">Aviator Target > 3 Prediction Dashboard</div>', unsafe_allow_html=True)
+st.markdown("---")
 
-    # Indicators
-    df["Momentum"] = (df["Variation_Tv"] > 0).astype(int)
-    df["Low_Volatility"] = (df["Std_Tv"] < df["Std_Tv"].rolling(3).mean()).astype(int)
-    df["Stable_Status"] = (
-        (df["Vstatus"].abs() < 0.7) &
-        (df["Vstatus_LV"].abs() < 0.9)
-    ).astype(int)
-
-    # Composite Score
-    df["Indicator_Score"] = (
-        df["Momentum"] +
-        df["Low_Volatility"].fillna(0) +
-        df["Stable_Status"]
-    )
-
-    # Prediction Flag
-    df["Expect_Target_gt_3"] = np.where(df["Indicator_Score"] >= 2, "YES", "NO")
-
-    return df
-
-
+# -----------------------------
+# LOAD DATA
+# -----------------------------
+@st.cache_data
 def load_data():
-    if os.path.exists(CSV_FILE):
-        return pd.read_csv(CSV_FILE)
-    return pd.DataFrame(columns=["Target"])
+    return pd.read_csv("aviator_processed_data.csv")
 
-
-# =========================
-# APP TITLE
-# =========================
-st.title("🚀 Aviator Early Indicator Dashboard")
-st.write("Predictive indicators for **Next Target > 3** (statistical, not guaranteed)")
-
-# =========================
-# INPUT SECTION
-# =========================
-st.subheader("Enter Target Values")
-user_input = st.text_area("Enter one value per line")
-
-if st.button("Process Data"):
-    if user_input.strip():
-        values = [float(x) for x in user_input.split("\n")]
-
-        df = load_data()
-        new_df = pd.DataFrame({"Target": values})
-        df = pd.concat([df, new_df], ignore_index=True)
-
-        df = calculate_features(df)
-        df.to_csv(CSV_FILE, index=False)
-        st.success("Data processed successfully!")
-
-# =========================
-# LOAD & DISPLAY
-# =========================
 df = load_data()
-if not df.empty:
-    last = df.iloc[-1]
 
-    st.subheader("📊 Current Indicator Status")
-    col1, col2, col3, col4 = st.columns(4)
+# -----------------------------
+# FEATURE ENGINEERING
+# -----------------------------
+df["Momentum"] = df["Target"].diff()
+df["Volatility"] = df["Target"].rolling(5).std()
 
-    col1.markdown(f"<div class='metric-box'>Momentum<br><span class='good'>{last['Momentum']}</span></div>", unsafe_allow_html=True)
-    col2.markdown(f"<div class='metric-box'>Low Volatility<br><span class='good'>{last['Low_Volatility']}</span></div>", unsafe_allow_html=True)
-    col3.markdown(f"<div class='metric-box'>Stable Status<br><span class='good'>{last['Stable_Status']}</span></div>", unsafe_allow_html=True)
+df.fillna(0, inplace=True)
 
-    status_class = "good" if last["Expect_Target_gt_3"] == "YES" else "bad"
-    col4.markdown(
-        f"<div class='metric-box'>Next Target &gt; 3<br><span class='{status_class}'>{last['Expect_Target_gt_3']}</span></div>",
+# Composite score
+df["Score"] = (
+    0.4 * np.abs(df["Vstatus"]) +
+    0.4 * np.abs(df["Vstatus_LV"]) +
+    0.2 * np.abs(df["Momentum"])
+)
+
+# -----------------------------
+# PROBABILITY MODEL
+# -----------------------------
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+df["Prob_Next_Target_GT_3"] = sigmoid(3 - df["Score"])
+
+# -----------------------------
+# SIDEBAR CONTROLS
+# -----------------------------
+st.sidebar.header("Model Controls")
+
+threshold = st.sidebar.slider(
+    "Probability Threshold",
+    min_value=0.40,
+    max_value=0.80,
+    value=0.55,
+    step=0.01
+)
+
+if st.sidebar.button("Clear Dashboard"):
+    st.experimental_rerun()
+
+# -----------------------------
+# INDICATOR
+# -----------------------------
+df["Indicator"] = np.where(
+    df["Prob_Next_Target_GT_3"] >= threshold,
+    "YES",
+    "NO"
+)
+
+# -----------------------------
+# CURRENT SIGNAL
+# -----------------------------
+latest = df.iloc[-1]
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.markdown('<div class="metric-box">', unsafe_allow_html=True)
+    st.metric("Probability Next Target > 3", f"{latest['Prob_Next_Target_GT_3']:.2f}")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col2:
+    st.markdown('<div class="metric-box">', unsafe_allow_html=True)
+    st.metric("Threshold", threshold)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+with col3:
+    st.markdown('<div class="metric-box">', unsafe_allow_html=True)
+    signal_class = "yes" if latest["Indicator"] == "YES" else "no"
+    st.markdown(
+        f"<span class='{signal_class}'>INDICATOR: {latest['Indicator']}</span>",
         unsafe_allow_html=True
     )
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # Last 6 rows
-    st.subheader("📋 Last 6 Records")
-    st.dataframe(df.tail(6))
+# -----------------------------
+# LAST 6 ROWS
+# -----------------------------
+st.markdown("### 📋 Last 6 Records")
+st.dataframe(
+    df.tail(6)[[
+        "Target",
+        "Vstatus",
+        "Vstatus_LV",
+        "Prob_Next_Target_GT_3",
+        "Indicator"
+    ]]
+)
 
-    # Download button
-    st.download_button(
-        label="⬇️ Download Full Dataset",
-        data=df.to_csv(index=False),
-        file_name=CSV_FILE,
-        mime="text/csv"
-    )
+# -----------------------------
+# VISUALIZATION
+# -----------------------------
+st.markdown("### 📈 Probability Trend")
+
+fig, ax = plt.subplots()
+ax.plot(df["Prob_Next_Target_GT_3"])
+ax.axhline(threshold)
+ax.set_ylabel("Probability")
+ax.set_xlabel("Time Index")
+st.pyplot(fig)
+
+# -----------------------------
+# DOWNLOAD BUTTON
+# -----------------------------
+st.markdown("### ⬇ Download Full Dataset")
+
+csv = df.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    label="Download CSV",
+    data=csv,
+    file_name="aviator_full_dataset.csv",
+    mime="text/csv"
+)
