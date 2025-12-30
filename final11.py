@@ -60,7 +60,6 @@ df = load_data()
 # -----------------------------
 df["Momentum"] = df["Target"].diff()
 df["Volatility"] = df["Target"].rolling(5).std()
-
 df.fillna(0, inplace=True)
 
 # Composite score
@@ -95,7 +94,23 @@ if st.sidebar.button("Clear Dashboard"):
     st.experimental_rerun()
 
 # -----------------------------
-# INDICATOR
+# MANUAL INPUT
+# -----------------------------
+st.sidebar.header("Manual Input for Prediction")
+
+vstatus_input = st.sidebar.number_input("Vstatus", value=0.0)
+vstatus_lv_input = st.sidebar.number_input("Vstatus_LV", value=0.0)
+momentum_input = st.sidebar.number_input("Momentum", value=0.0)
+
+score_input = 0.4 * abs(vstatus_input) + 0.4 * abs(vstatus_lv_input) + 0.2 * abs(momentum_input)
+prob_input = sigmoid(3 - score_input)
+indicator_input = "YES" if prob_input >= threshold else "NO"
+
+st.sidebar.markdown(f"**Predicted Probability:** {prob_input:.2f}")
+st.sidebar.markdown(f"**Indicator:** <span class='{ 'yes' if indicator_input=='YES' else 'no' }'>{indicator_input}</span>", unsafe_allow_html=True)
+
+# -----------------------------
+# DATASET INDICATOR
 # -----------------------------
 df["Indicator"] = np.where(
     df["Prob_Next_Target_GT_3"] >= threshold,
@@ -104,7 +119,7 @@ df["Indicator"] = np.where(
 )
 
 # -----------------------------
-# CURRENT SIGNAL
+# CURRENT SIGNAL (Latest Dataset Row)
 # -----------------------------
 latest = df.iloc[-1]
 
@@ -112,7 +127,7 @@ col1, col2, col3 = st.columns(3)
 
 with col1:
     st.markdown('<div class="metric-box">', unsafe_allow_html=True)
-    st.metric("Probability Next Target > 3", f"{latest['Prob_Next_Target_GT_3']:.2f}")
+    st.metric("Dataset Probability Next Target > 3", f"{latest['Prob_Next_Target_GT_3']:.2f}")
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
@@ -124,7 +139,7 @@ with col3:
     st.markdown('<div class="metric-box">', unsafe_allow_html=True)
     signal_class = "yes" if latest["Indicator"] == "YES" else "no"
     st.markdown(
-        f"<span class='{signal_class}'>INDICATOR: {latest['Indicator']}</span>",
+        f"<span class='{signal_class}'>Dataset Indicator: {latest['Indicator']}</span>",
         unsafe_allow_html=True
     )
     st.markdown('</div>', unsafe_allow_html=True)
@@ -138,6 +153,7 @@ st.dataframe(
         "Target",
         "Vstatus",
         "Vstatus_LV",
+        "Momentum",
         "Prob_Next_Target_GT_3",
         "Indicator"
     ]]
@@ -146,13 +162,14 @@ st.dataframe(
 # -----------------------------
 # VISUALIZATION
 # -----------------------------
-st.markdown("### 📈 Probability Trend")
+st.markdown("### 📈 Probability Trend (Dataset)")
 
 fig, ax = plt.subplots()
-ax.plot(df["Prob_Next_Target_GT_3"])
-ax.axhline(threshold)
+ax.plot(df["Prob_Next_Target_GT_3"], marker='o', linestyle='-')
+ax.axhline(threshold, color='red', linestyle='--', label='Threshold')
 ax.set_ylabel("Probability")
 ax.set_xlabel("Time Index")
+ax.legend()
 st.pyplot(fig)
 
 # -----------------------------
