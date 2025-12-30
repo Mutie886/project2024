@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import matplotlib.pyplot as plt
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="Aviator Indicator Dashboard", layout="wide")
+
 CSV_FILE = "aviator_processed_data.csv"
 
 # =========================
@@ -24,7 +24,6 @@ body {
     background-color: white;
     box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
     text-align: center;
-    margin-bottom: 10px;
 }
 .good { color: green; font-weight: bold; }
 .warn { color: orange; font-weight: bold; }
@@ -41,23 +40,36 @@ def calculate_features(df):
     df["lag_Target"] = df["Target"].shift(1)
     df["lag_Variation"] = df["Variation_Tv"].shift(1)
     df["Vstatus_LV"] = df["lag_Variation"].fillna(0).cumsum()
-    df["Std_Tv"] = df["Variation_Tv"].expanding().std(ddof=1).fillna(0)
+    df["Std_Tv"] = df["Variation_Tv"].expanding().std(ddof=1)
+    df["StdDev_Variation"] = df["Variation_Tv"].expanding().std(ddof=1)
+    df["Ave_mean"] = df["Target"].expanding().mean()
+
+    # Indicators
     df["Momentum"] = (df["Variation_Tv"] > 0).astype(int)
-    df["Low_Volatility"] = (df["Std_Tv"] < df["Std_Tv"].rolling(3, min_periods=1).mean()).astype(int)
-    df["Stable_Status"] = ((df["Vstatus"].abs() < 0.7) & (df["Vstatus_LV"].abs() < 0.9)).astype(int)
+    df["Low_Volatility"] = (df["Std_Tv"] < df["Std_Tv"].rolling(3).mean()).astype(int)
+    df["Stable_Status"] = (
+        (df["Vstatus"].abs() < 0.7) &
+        (df["Vstatus_LV"].abs() < 0.9)
+    ).astype(int)
 
-    # Composite Score & Probability
-    df["Indicator_Score"] = df["Momentum"] + df["Low_Volatility"] + df["Stable_Status"]
-    df["Prob_Next_Target_GT_3"] = 1 / (1 + np.exp(-(df["Indicator_Score"])))  # Sigmoid
+    # Composite Score
+    df["Indicator_Score"] = (
+        df["Momentum"] +
+        df["Low_Volatility"].fillna(0) +
+        df["Stable_Status"]
+    )
 
-    # Prediction based on threshold (default 0.55)
-    df["Expect_Target_gt_3"] = np.where(df["Prob_Next_Target_GT_3"] >= 0.55, "YES", "NO")
+    # Prediction Flag
+    df["Expect_Target_gt_3"] = np.where(df["Indicator_Score"] >= 2, "YES", "NO")
+
     return df
+
 
 def load_data():
     if os.path.exists(CSV_FILE):
         return pd.read_csv(CSV_FILE)
     return pd.DataFrame(columns=["Target"])
+
 
 # =========================
 # APP TITLE
@@ -66,41 +78,25 @@ st.title("🚀 Aviator Early Indicator Dashboard")
 st.write("Predictive indicators for **Next Target > 3** (statistical, not guaranteed)")
 
 # =========================
-# SIDEBAR CONTROLS
-# =========================
-st.sidebar.header("Model Controls")
-threshold = st.sidebar.slider(
-    "Probability Threshold",
-    min_value=0.40,
-    max_value=0.80,
-    value=0.55,
-    step=0.01
-)
-if st.sidebar.button("Clear Dashboard"):
-    if os.path.exists(CSV_FILE):
-        os.remove(CSV_FILE)
-    st.experimental_rerun()
-
-# =========================
 # INPUT SECTION
 # =========================
-st.subheader("Enter Target Values (One per Line)")
-user_input = st.text_area("")
+st.subheader("Enter Target Values")
+user_input = st.text_area("Enter one value per line")
 
 if st.button("Process Data"):
     if user_input.strip():
         values = [float(x) for x in user_input.split("\n")]
+
         df = load_data()
         new_df = pd.DataFrame({"Target": values})
         df = pd.concat([df, new_df], ignore_index=True)
+
         df = calculate_features(df)
-        # Apply threshold from sidebar
-        df["Expect_Target_gt_3"] = np.where(df["Prob_Next_Target_GT_3"] >= threshold, "YES", "NO")
         df.to_csv(CSV_FILE, index=False)
         st.success("Data processed successfully!")
 
 # =========================
-# LOAD & DISPLAY DATA
+# LOAD & DISPLAY
 # =========================
 df = load_data()
 if not df.empty:
@@ -108,6 +104,7 @@ if not df.empty:
 
     st.subheader("📊 Current Indicator Status")
     col1, col2, col3, col4 = st.columns(4)
+
     col1.markdown(f"<div class='metric-box'>Momentum<br><span class='good'>{last['Momentum']}</span></div>", unsafe_allow_html=True)
     col2.markdown(f"<div class='metric-box'>Low Volatility<br><span class='good'>{last['Low_Volatility']}</span></div>", unsafe_allow_html=True)
     col3.markdown(f"<div class='metric-box'>Stable Status<br><span class='good'>{last['Stable_Status']}</span></div>", unsafe_allow_html=True)
@@ -118,27 +115,11 @@ if not df.empty:
         unsafe_allow_html=True
     )
 
-    # =========================
-    # LAST 6 ROWS
-    # =========================
+    # Last 6 rows
     st.subheader("📋 Last 6 Records")
     st.dataframe(df.tail(6))
 
-    # =========================
-    # PROBABILITY TREND
-    # =========================
-    st.subheader("📈 Probability Trend")
-    fig, ax = plt.subplots()
-    ax.plot(df["Prob_Next_Target_GT_3"], marker='o', linestyle='-')
-    ax.axhline(threshold, color='red', linestyle='--', label='Threshold')
-    ax.set_ylabel("Probability")
-    ax.set_xlabel("Index")
-    ax.legend()
-    st.pyplot(fig)
-
-    # =========================
-    # DOWNLOAD BUTTON
-    # =========================
+    # Download button
     st.download_button(
         label="⬇️ Download Full Dataset",
         data=df.to_csv(index=False),
